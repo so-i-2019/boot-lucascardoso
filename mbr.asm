@@ -1,74 +1,271 @@
-	;; mbr.asm - A simple x86 bootloader example.
+	;; Copyright (c) 2019 - Lucas Sobral Fontes Cardoso <lucas.sobral.cardoso@usp.br>
 	;;
-	;; In worship to the seven hacker gods and for the honor 
-	;; of source code realm, we hereby humbly offer our sacred 
-	;; "Hello World" sacrifice. May our code remain bugless.
+	;; This is free software and distributed under GNU GPL vr.3. Please 
+	;; refer to the companion file LICENSING or to the online documentation
+	;; at https://www.gnu.org/licenses/gpl-3.0.txt for further information.
 
+	MAX_COL equ 30
+	MAX_ROW equ 16
+	N_BOMBS equ 99
+	VECTOR_POS equ 0x7e00
+	VIDEO_MEM_POS equ 0xb8000
 	
 	org 0x7c00		; Our load address
 
-	mov ah, 0xe		; Configure BIOS teletype mode
 
-	mov bx, 0		; May be 0 because org directive.
+;__________________________ Área do programa que gera o campo do jogo _______________________________;
+	mov ecx, 0
+vec_inicialize:
+	mov edi, VECTOR_POS	; Using free memory area as a vector
+	add edi, ecx
+	mov BYTE [edi], '0'
+	inc ecx
+	cmp ecx, MAX_COL*MAX_ROW
+	jle vec_inicialize
 
-loop:				; Write a 0x0-terminated ascii string
-	mov al, [here + bx]	
+	mov cl, 0
+gen_bombs:			; Generating bombs
+	mov edi, VECTOR_POS
+	call rand
+	add edi, edx	; Random vector position to put bomb
+
+	mov ch, [edi]
+	cmp ch, 'b'		; Can't put a bomb where there already is one
+	jge gen_bombs
+
+	mov BYTE [edi], 'b'
+	call inc_adj
+
+	inc cl
+	cmp cl, N_BOMBS	; Repeat untill all bombs are on a random square
+	jl gen_bombs
+
+;__________________ Área do programa que imprime campo para interação do usuário _____________________;
+Board:
+	; Clear initial page
+	mov ecx, 0
+	mov edi, VIDEO_MEM_POS
+Clear_loop:	
+	mov BYTE [edi], 32
+	add edi, 2
+	inc ecx
+	cmp ecx, 2000
+	jle Clear_loop
+
+	; Position cursor at 0,0
+	mov ah, 02h
+	mov bh, 00h
+	mov dh, 00h
+	mov dl, 00h
 	int 0x10
-	cmp al, 0x0
-	je end
-	add bx, 0x1		
-	jmp loop
 
-end:				; Jump forever (same as jmp end)
+	; Drawing board
+	mov bl, 0
+	mov bh, 0
+	mov edi, VIDEO_MEM_POS ; Accessing video memory area
+drawboard:
+	mov BYTE[edi], '.'
+	add edi, 2
+	inc bl
+	cmp bl, MAX_COL
+	jl drawboard
+	mov bl, 0
+	inc bh
+	add edi, 160-MAX_COL-MAX_COL
+	cmp bh, MAX_ROW
+	je cursor_control
+	jmp drawboard
+
+;_______________________ Área do programa que interpreta entrada do usuário _________________________;
+cursor_control:
+	mov ah, 00h
+	int 0x16
+	; Chamada de funcoes de movimento
+	mov bh, 0
+	cmp al, 'j'
+	je end
+
+	; Reading current cursor position
+	mov ah, 03h
+	int 0x10
+	; dh has cursor row, dl has cursor column
+	mov ah, 02h
+
+down:
+	cmp al, 's'
+	jne k_up
+	inc dh
+k_up:
+	cmp al, 'w'
+	jne k_left
+	dec dh
+k_left:
+	cmp al, 'a'
+	jne k_right
+	dec dl
+k_right:
+	cmp al, 'd'
+	jne k_mark
+	inc dl
+k_mark:
+	cmp al, 'q'
+	jne k_check
+	mov ah, 09h
+	mov al, '.'
+	mov bl, 04h
+	mov cx, 1
+k_check:
+	cmp al, 'e'
+	jne end_cursor
+
+	mov eax, 0	; Guarantee 0 at most significant 16 bits
+	mov bl, dl	; Avoid changing dx with cursor info
+	mov al, dh
+	
+	; Convert cursor dh row, dl col into vector index
+	mov bh, MAX_COL
+	mul bh
+	mov bh, 0
+	add ax, bx	; Index = Row*MAX_COLUMNS + Col
+
+	; Read vector from memory at index(eax) position
+	mov edi, VECTOR_POS
+	add edi, eax
+	mov al, [edi]
+
+	; Test value of bh
+	cmp al, 'a'	; If its a letter its a bomb, so game over
+	jge end
+	mov ah, 09h	; If its not a letter we reveal on screen
+	mov bh, 0
+	mov bl, al
+	sub bl, '0'-5
+	mov cx, 1
+
+end_cursor:
+	int 0x10
+	jmp cursor_control
+
+;________________________________________ Fim do Programa ___________________________________________;
+end:
+	mov ah, 05h		; Change display page
+	mov al, 01h		; page number
+	int 0x10
+
+	mov ah, 0eh
+	mov al, 'G'
+	mov bh, 01h
+	int 0x10
+	mov al, 'a'
+	int 0x10
+	mov al, 'm'
+	int 0x10
+	mov al, 'e'
+	int 0x10
+	mov al, ' '
+	int 0x10
+	mov al, 'O'
+	int 0x10
+	mov al, 'v'
+	int 0x10
+	mov al, 'e'
+	int 0x10
+	mov al, 'r'
+	int 0x10
+
 	jmp $
 
-here:				; C-like NULL terminated string
 
-	db 'Hello world!', 0xd, 0xa, 0x0
-	
+
+
+;-------------------- Function that calculates random number with range 0-251 ------------------------;
+;-----------------------------------------------------------------------------------------------------;
+rand:				; Pseudo-random number generator of type LCG(linear congruential generator)
+	mov eax, [SEED]	; Using m = 2^32, a = 1103515245, c = 12345
+	mov ebx, 1103515245
+	mul ebx			; Result more significant bits on EDX less on EAX
+	mov ebx, 12345
+	add eax, ebx
+
+	mov edx, 0		; To get mod 2^32 we just ignore the most significant 32 bits
+	mov [SEED], eax
+	mov ebx, MAX_COL*MAX_ROW
+	div ebx			; Remainder on edx
+	ret				; Return pseudo-random number between 0-251 on edx
+
+
+
+
+;----------------------- Function that increments numbers next to a bomb -----------------------------;
+;-----------------------------------------------------------------------------------------------------;
+inc_adj:
+	; Expects vector index on edx
+	mov eax, edx
+	mov dl, MAX_COL
+	div dl
+	mov dl, ah
+	mov dh, al
+
+	; dl = col; dh = row;
+	cmp dh, 0			; Testing if row = 0
+	je row_plus
+	; Row is not zero
+	mov bl, [edi-MAX_COL] 	; INC R-1 C0
+	inc bl
+	mov BYTE [edi-MAX_COL], bl
+
+	cmp dl, 0			; Testing if col = 0
+	je col_plus1
+	mov bl, [edi-MAX_COL-1]	; INC R-1 C-1
+	inc bl
+	mov BYTE [edi-MAX_COL-1], bl
+col_plus1:
+	cmp dl, MAX_COL-1	; Testing if col = MAX_COL
+	je row_plus
+	mov bl, [edi-MAX_COL+1]	; INC R-1 C+1
+	inc bl
+	mov BYTE [edi-MAX_COL+1], bl
+
+row_plus:
+	cmp dh, MAX_ROW-1	; Testing if col = MAX_ROW
+	je row_max
+	; Row is not max
+	mov bl, [edi+MAX_COL]	; INC R+1 C0
+	inc bl
+	mov BYTE [edi+MAX_COL], bl
+	cmp dl, 0
+	je col_plus2
+	; Col is not zero
+	mov bl, [edi+MAX_COL-1]	; INC R+1 C-1
+	inc bl
+	mov BYTE [edi+MAX_COL-1], bl
+col_plus2:
+	cmp dl, MAX_COL-1
+	je row_max
+	; Col is not max
+	mov bl, [edi+MAX_COL+1]	; INC R+1 C+1
+	inc bl
+	mov BYTE [edi+MAX_COL+1], bl
+row_max:
+	; Incrementing on the same row
+	cmp dl, 0
+	je col_plus3
+	; Col is not zero
+	mov bl, [edi-1]		; INC R0 C-1
+	inc bl
+	mov BYTE [edi-1], bl
+col_plus3:
+	cmp dl, MAX_COL-1
+	je inc_end
+	; Col is not max
+	mov bl, [edi+1]		; INC R0 C+1
+	inc bl
+	mov BYTE [edi+1], bl
+inc_end:
+	ret
+
+
+; Final data/size control area
+	SEED dd 0x00
 	times 510 - ($-$$) db 0	; Pad with zeros
 	dw 0xaa55		; Boot signature
-
-		
-	;; Notes (remove these comments for your code).
-	;; 
-	;; This assembly source code is written for x86 architecture in intel 
-	;; syntax and NASM  assembler dialect. It's mean to be compiled with 
-	;; NASM assembler.
-	;; 
-	;; A label (such as 'loop:') is interpreted by the prepossessesor as
-	;; the offset to (byte count at) the next command (jmp instruction, 
-	;; in this example).
-	;; 
-	;; The directive org 0x7c00 intructs the compiler to automatically
-	;; add the load address to the offset when necessary. Therefore,
-	;; 'mov al, label' virtually becomes 'mov al, label + 0x7c00'. 
-	;; 
-	;; BIOS interruption 'int 0x10' causes the execution flow to jump to 
-	;; the interruption vector table area, where there is a pre-loaded BIOS
-	;; routine capable of outputing characters to the video controller.
-	;; This interruption handler routine reads the byte at the 8-bit
-	;; register and send to the video controller. The video operation
-	;; mode (e.g. ascii character) is controlled by register ah.
-	;; After completing the operation, execution flow is returned to
-	;; the next line after 'int' instruction.
-	;;
-	;; The argument of jmp and je instructions, here, is a relative offset. 
-	;;
-	;; The line db causes the ouput of 1-byte patters at the current
-	;; position in the generated machine code. For instance, the string
-	;; 'Hello World' followed by newline and return ascii codes is inserted
-	;; in the given location.
-	;; 
-	;; The directive 'times X Y' produces a sequence of X repetitions of
-	;; of Y. The type specification 'db' means that Y is a byte (8 bits).
-	;; If it were dw, it would mean 'word', i.e. 16 bits.
-	;;
-	;; Symbol $  denotes the address of (byte count at) the current line.
-	;; Symbol $$ denotes the address of (byte count at) the start of current
-	;; section (in present case, we have only one section). Therefore, the
-	;; value ($-$$) is the current address minus the address of the
-	;; program start. We need 510 minus this amount of zeros.
-	;;
-	;; The line dw causes the output of the 2-byte pattern for the boot
-	;; signature at the current position (positions 511 and 512).

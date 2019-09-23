@@ -1,4 +1,3 @@
-# asm-bootloader-template
-A simple template for the bootloader challenge
+# asm-bootloader-minesweeper
+A simple minesweeper game made with only BIOS functions and the 512 boot bytes.
 
-Please, refer to the file `README`
