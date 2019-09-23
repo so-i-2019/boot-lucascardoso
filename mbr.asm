@@ -11,8 +11,8 @@
 	VIDEO_MEM_POS equ 0xb8000
 	
 	org 0x7c00		; Our load address
-
-
+	mov sp, 0x8000
+	
 ;__________________________ Área do programa que gera o campo do jogo _______________________________;
 	mov ecx, 0
 vec_inicialize:
@@ -27,6 +27,8 @@ vec_inicialize:
 gen_bombs:			; Generating bombs
 	mov edi, VECTOR_POS
 	call rand
+	;jmp rand
+;rand_return:
 	add edi, edx	; Random vector position to put bomb
 
 	mov ch, [edi]
@@ -35,6 +37,8 @@ gen_bombs:			; Generating bombs
 
 	mov BYTE [edi], 'b'
 	call inc_adj
+	;jmp inc_adj
+;inc_adj_ret:
 
 	inc cl
 	cmp cl, N_BOMBS	; Repeat untill all bombs are on a random square
@@ -191,6 +195,7 @@ rand:				; Pseudo-random number generator of type LCG(linear congruential genera
 	mov [SEED], eax
 	mov ebx, MAX_COL*MAX_ROW
 	div ebx			; Remainder on edx
+	;jmp rand_return
 	ret				; Return pseudo-random number between 0-251 on edx
 
 
@@ -263,9 +268,10 @@ col_plus3:
 	mov BYTE [edi+1], bl
 inc_end:
 	ret
+	;jmp inc_adj_ret
 
 
 ; Final data/size control area
-	SEED dd 0x00
+	SEED dd 0x0b
 	times 510 - ($-$$) db 0	; Pad with zeros
 	dw 0xaa55		; Boot signature
